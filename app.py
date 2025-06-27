@@ -1,69 +1,56 @@
 import os
-from flask import Flask, render_template, request, redirect, url_for, send_from_directory, flash
+import io
+from flask import Flask, render_template, request, flash, send_file
 from werkzeug.utils import secure_filename
 import steganography
 
-# Konfigurasi
-UPLOAD_FOLDER = 'uploads/'
-DOWNLOAD_FOLDER = 'downloads/'
-ALLOWED_EXTENSIONS = {'png', 'bmp', 'jpg', 'jpeg'}
-
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['DOWNLOAD_FOLDER'] = DOWNLOAD_FOLDER
-app.secret_key = 'kunci_rahasia_super_aman' # Ganti dengan kunci rahasia Anda sendiri
+app.secret_key = os.urandom(24) # Kunci rahasia aman untuk produksi
 
 def allowed_file(filename):
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'png', 'bmp', 'jpg', 'jpeg'}
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
-        # Cek apakah ada file yang di-upload
-        if 'image' not in request.files:
+        if 'image' not in request.files or request.files['image'].filename == '':
             flash('Tidak ada file yang dipilih')
-            return redirect(request.url)
+            return render_template('index.html')
         
         file = request.files['image']
-        
-        if file.filename == '':
-            flash('Tidak ada file yang dipilih')
-            return redirect(request.url)
+        if not allowed_file(file.filename):
+            flash('Format file tidak diizinkan')
+            return render_template('index.html')
+
+        # Logika Encode
+        if 'encode' in request.form:
+            secret_text = request.form['secret_text']
+            if not secret_text:
+                flash('Teks rahasia tidak boleh kosong!')
+                return render_template('index.html')
+
+            image_bytes = file.read()
+            encoded_buffer, message = steganography.encode_image(image_bytes, secret_text)
             
-        if file and allowed_file(file.filename):
+            flash(message)
+            if encoded_buffer:
+                return send_file(
+                    encoded_buffer,
+                    mimetype='image/png',
+                    as_attachment=True,
+                    download_name=f'encoded_{os.path.splitext(file.filename)[0]}.png'
+                )
+            return render_template('index.html')
+
+        # Logika Decode
+        elif 'decode' in request.form:
             filename = secure_filename(file.filename)
-            # Simpan file yang di-upload sementara
-            os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            temp_dir = '/tmp' # Vercel hanya mengizinkan penulisan di folder /tmp
+            filepath = os.path.join(temp_dir, filename)
             file.save(filepath)
-
-            # Cek form mana yang di-submit (Encode atau Decode)
-            if 'encode' in request.form:
-                secret_text = request.form['secret_text']
-                if not secret_text:
-                    flash('Teks rahasia tidak boleh kosong untuk di-encode!')
-                    return redirect(request.url)
-                
-                output_filename = 'encoded_' + filename
-                # Panggil fungsi encode dari steganography.py
-                result_file, message = steganography.encode_image(filepath, secret_text, output_filename)
-                
-                flash(message)
-                if result_file:
-                    return render_template('index.html', encoded_image=result_file)
-
-            elif 'decode' in request.form:
-                # Panggil fungsi decode dari steganography.py
-                decoded_text = steganography.decode_image(filepath)
-                return render_template('index.html', decoded_text=decoded_text)
+            
+            decoded_text = steganography.decode_image(filepath)
+            os.remove(filepath) # Hapus file sementara setelah selesai
+            return render_template('index.html', decoded_text=decoded_text)
 
     return render_template('index.html')
-
-@app.route('/download/<filename>')
-def download_file(filename):
-    """Menyediakan link download untuk file hasil encode."""
-    return send_from_directory(app.config["DOWNLOAD_FOLDER"], filename, as_attachment=True)
-
-if __name__ == '__main__':
-    app.run(debug=True)

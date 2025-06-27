@@ -1,72 +1,50 @@
 from PIL import Image
-import os
+import io
 
 def text_to_binary(text):
-    """Mengubah string teks menjadi string biner."""
     return ''.join(format(ord(char), '08b') for char in text)
 
-def encode_image(image_path, secret_text, output_filename):
-    """Menyembunyikan teks rahasia di dalam gambar dan menyimpannya."""
+def encode_image(image_bytes, secret_text):
     try:
-        image = Image.open(image_path)
-    except FileNotFoundError:
-        return None, "Error: File gambar tidak ditemukan."
+        image = Image.open(io.BytesIO(image_bytes))
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+    except Exception as e:
+        return None, f"Error: Gagal membuka gambar. {e}"
 
     delimiter = "$$$END$$$"
-    text_to_hide = secret_text + delimiter
-    binary_secret_text = text_to_binary(text_to_hide)
+    binary_secret_text = text_to_binary(secret_text + delimiter)
     
-    image_capacity = image.width * image.height * 3
-    if len(binary_secret_text) > image_capacity:
-        return None, "Error: Teks terlalu panjang untuk disembunyikan."
+    if len(binary_secret_text) > image.width * image.height * 3:
+        return None, "Error: Teks terlalu panjang."
 
-    new_image = image.copy()
-    pixels = new_image.load()
+    pixels = image.load()
     data_index = 0
     
-    for y in range(new_image.height):
-        for x in range(new_image.width):
-            r, g, b = pixels[x, y][:3]
-
+    for y in range(image.height):
+        for x in range(image.width):
+            r, g, b = pixels[x, y]
             if data_index < len(binary_secret_text):
-                r_bin = list(format(r, '08b'))
-                r_bin[-1] = binary_secret_text[data_index]
-                r = int("".join(r_bin), 2)
-                data_index += 1
-            
+                r_bin = list(format(r, '08b')); r_bin[-1] = binary_secret_text[data_index]; r = int("".join(r_bin), 2); data_index += 1
             if data_index < len(binary_secret_text):
-                g_bin = list(format(g, '08b'))
-                g_bin[-1] = binary_secret_text[data_index]
-                g = int("".join(g_bin), 2)
-                data_index += 1
-
+                g_bin = list(format(g, '08b')); g_bin[-1] = binary_secret_text[data_index]; g = int("".join(g_bin), 2); data_index += 1
             if data_index < len(binary_secret_text):
-                b_bin = list(format(b, '08b'))
-                b_bin[-1] = binary_secret_text[data_index]
-                b = int("".join(b_bin), 2)
-                data_index += 1
-            
+                b_bin = list(format(b, '08b')); b_bin[-1] = binary_secret_text[data_index]; b = int("".join(b_bin), 2); data_index += 1
             pixels[x, y] = (r, g, b)
+            if data_index >= len(binary_secret_text): break
+        if data_index >= len(binary_secret_text): break
 
-            if data_index >= len(binary_secret_text):
-                break
-        if data_index >= len(binary_secret_text):
-            break
-
-    # Pastikan direktori output ada
-    output_dir = "downloads"
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, output_filename)
+    output_buffer = io.BytesIO()
+    image.save(output_buffer, format="PNG")
+    output_buffer.seek(0)
     
-    new_image.save(output_path, "PNG")
-    return output_filename, "Encoding berhasil."
+    return output_buffer, "Encoding berhasil."
 
 def decode_image(image_path):
-    """Mengekstrak teks rahasia dari sebuah gambar."""
     try:
         image = Image.open(image_path)
-    except FileNotFoundError:
-        return "Error: File gambar tidak ditemukan."
+    except Exception:
+        return "Error: File gambar tidak ditemukan atau rusak."
 
     pixels = image.load()
     binary_data = ""
@@ -80,7 +58,6 @@ def decode_image(image_path):
             binary_data += format(b, '08b')[-1]
 
     all_bytes = [binary_data[i: i+8] for i in range(0, len(binary_data), 8)]
-    
     decoded_text = ""
     for byte in all_bytes:
         if len(byte) == 8:
@@ -88,4 +65,4 @@ def decode_image(image_path):
             if decoded_text.endswith(delimiter):
                 return decoded_text[:-len(delimiter)]
     
-    return "Delimiter tidak ditemukan. Mungkin tidak ada pesan tersembunyi."
+    return "Delimiter tidak ditemukan."
